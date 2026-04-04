@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+PyGithub
+sentence-transformers
+supabase
+groq
+langgraph
+bcrypt
+python-jose
+psycopg2-binary
+langgraph-checkpoint-postgres
