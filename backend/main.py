@@ -4,11 +4,12 @@ import bcrypt
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, HTTPException, Depends, Cookie, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from jose import jwt, JWTError
+from langgraph.types import Command
 
 from agent import graph
 from tools import supabase
@@ -16,15 +17,19 @@ from tools import supabase
 load_dotenv()
 
 app = FastAPI()
-security = HTTPBearer()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "http://localhost:5501",
+        "http://127.0.0.1:5501",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 JWT_SECRET = os.getenv("JWT_SECRET", "changeme")
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -36,17 +41,19 @@ def make_token(user_id: str) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-def current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+def current_user(token: str = Cookie(None)) -> dict:
+    if not token:
+        raise HTTPException(status_code=401, detail="Not logged in")
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         user_id = payload["sub"]
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    result = supabase.table("users").select("*").eq("id", user_id).single().execute()
+    result = supabase.table("users").select("*").eq("id", user_id).execute()
     if not result.data:
         raise HTTPException(status_code=401, detail="User not found")
-    return result.data
+    return result.data[0]
 
 # ── Request models ────────────────────────────────────────────────────────────
 
@@ -76,25 +83,53 @@ def signup(body: SignupRequest):
 
     hashed = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     user   = {
-        "id":           str(uuid.uuid4()),
-        "email":        body.email,
+        "id":            str(uuid.uuid4()),
+        "email":         body.email,
         "password_hash": hashed,
-        "github_token": body.github_token,
+        "github_token":  body.github_token,
     }
     supabase.table("users").insert(user).execute()
-    return {"token": make_token(user["id"])}
+
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        key="token",
+        value=make_token(user["id"]),
+        httponly=True,
+        secure=False,     # set True in production (HTTPS)
+        samesite="lax",
+        max_age=7 * 24 * 3600,
+    )
+    return response
 
 @app.post("/login")
 def login(body: LoginRequest):
-    result = supabase.table("users").select("*").eq("email", body.email).single().execute()
+    result = supabase.table("users").select("*").eq("email", body.email).execute()
     if not result.data:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    user = result.data
+    user = result.data[0]
     if not bcrypt.checkpw(body.password.encode(), user["password_hash"].encode()):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    return {"token": make_token(user["id"])}
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        key="token",
+        value=make_token(user["id"]),
+        httponly=True,
+        secure=False,     # set True in production (HTTPS)
+        samesite="lax",
+        max_age=7 * 24 * 3600,
+    )
+    return response
+
+@app.post("/logout")
+def logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("token")
+    return response
+
+
+
 
 # ── Triage routes ─────────────────────────────────────────────────────────────
 
@@ -104,37 +139,53 @@ def start_triage(body: TriageRequest, user: dict = Depends(current_user)):
     config    = {"configurable": {"thread_id": thread_id}}
 
     graph.invoke({
-        "repo":         body.repo,
-        "github_token": user["github_token"],
-        "issues":       [],
-        "results":      [],
+        "repo":          body.repo,
+        "github_token":  user["github_token"],
+        "issues":        [],
+        "fetched_count": 0,
+        "classified":    [],
+        "decisions":     [],
+        "review_index":  0,
     }, config=config)
 
     return {"thread_id": thread_id}
+
+
 
 @app.get("/status/{thread_id}")
 def get_status(thread_id: str, user: dict = Depends(current_user)):
     config = {"configurable": {"thread_id": thread_id}}
     state  = graph.get_state(config)
 
-    # check if graph is paused at approval
+    classified   = state.values.get("classified", [])
+    decisions    = state.values.get("decisions", [])
+    review_index = state.values.get("review_index", 0)
+
+    # merge decisions into classified so frontend knows posted/skipped/pending
+    merged = []
+    for i, item in enumerate(classified):
+        posted = decisions[i] if i < len(decisions) else None
+        merged.append({**item, "posted": posted})
+
     pending = None
-    if state.next and "approval" in state.next:
+    if state.next and "approval" in state.next and review_index < len(classified):
+        item    = classified[review_index]
         pending = {
-            "issue":   state.values.get("current_issue"),
-            "comment": state.values.get("comment"),
+            "issue":          item["issue"],
+            "comment":        item["comment"],
+            "classification": item["classification"],
+            "severity":       item["severity"],
         }
 
     return {
-        "status":  "waiting" if pending else "done",
-        "pending": pending,
-        "results": state.values.get("results", []),
+        "status":        "waiting" if pending else "done",
+        "pending":       pending,
+        "classified":    merged,
+        "fetched_count": state.values.get("fetched_count", 0),
     }
 
 @app.post("/approve")
 def approve(body: ApproveRequest, user: dict = Depends(current_user)):
     config = {"configurable": {"thread_id": body.thread_id}}
-
-    graph.invoke(body.approved, config=config)
-
+    graph.invoke(Command(resume=body.approved), config=config)
     return {"ok": True}

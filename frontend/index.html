@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GitHub Triage Agent</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .page { display: none; width: 100%; }
+    .page.active { display: block; }
+
+    /* ── Auth ── */
+    .auth-box {
+      max-width: 400px;
+      margin: 60px auto;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 32px;
+    }
+
+    .auth-box h1 { font-size: 20px; margin-bottom: 24px; text-align: center; }
+
+    .tabs {
+      display: flex;
+      margin-bottom: 24px;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 8px;
+      background: none;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      font-size: 14px;
+      padding-bottom: 12px;
+    }
+
+    .tab.active {
+      color: #e6edf3;
+      border-bottom: 2px solid #2f81f7;
+      margin-bottom: -1px;
+    }
+
+    .field { margin-bottom: 16px; }
+    .field label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 6px; }
+
+    input {
+      width: 100%;
+      padding: 8px 12px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      font-size: 14px;
+    }
+
+    input:focus { outline: none; border-color: #2f81f7; }
+
+    .hint { font-size: 12px; color: #8b949e; margin-top: 4px; }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #2f81f7;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    button:hover { background: #388bfd; }
+    button:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+
+    .error { color: #f85149; font-size: 13px; margin-top: 12px; text-align: center; }
+
+    /* ── Dashboard ── */
+    .dashboard {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 32px;
+    }
+
+    .topbar h1 { font-size: 18px; }
+
+    .logout {
+      background: none;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      width: auto;
+      padding: 6px 14px;
+      font-size: 13px;
+    }
+
+    .logout:hover { background: #21262d; color: #e6edf3; }
+
+    .run-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 32px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .run-box input { flex: 1; }
+    .run-box button { width: auto; padding: 8px 20px; margin: 0; }
+
+    .section-title {
+      font-size: 14px;
+      color: #8b949e;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .card-title { font-size: 15px; font-weight: 500; }
+    .card-number { font-size: 13px; color: #8b949e; }
+
+    .comment-box {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 13px;
+      color: #8b949e;
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+
+    .card-actions { display: flex; gap: 10px; }
+
+    .btn-approve {
+      background: #1f6feb;
+      width: auto;
+      padding: 7px 18px;
+      font-size: 13px;
+      margin: 0;
+    }
+
+    .btn-reject {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #e6edf3;
+      width: auto;
+      padding: 7px 18px;
+      font-size: 13px;
+      margin: 0;
+    }
+
+    .btn-reject:hover { background: #2d333b; }
+
+    .posted-tag {
+      font-size: 12px; color: #3fb950;
+      padding: 3px 8px;
+      border: 1px solid #3fb950;
+      border-radius: 20px;
+    }
+
+    .rejected-tag {
+      font-size: 12px; color: #8b949e;
+      padding: 3px 8px;
+      border: 1px solid #30363d;
+      border-radius: 20px;
+    }
+
+    .empty { color: #8b949e; font-size: 14px; text-align: center; padding: 40px 0; }
+
+    /* ── Severity lanes ── */
+    .severity-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .severity-lane { display: flex; flex-direction: column; gap: 12px; }
+
+    .lane-header {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      display: inline-block;
+      margin-bottom: 4px;
+    }
+
+    .lane-high   .lane-header { color: #f85149; background: rgba(248,81,73,.12); border: 1px solid rgba(248,81,73,.3); }
+    .lane-medium .lane-header { color: #d29922; background: rgba(210,153,34,.12); border: 1px solid rgba(210,153,34,.3); }
+    .lane-low    .lane-header { color: #3fb950; background: rgba(63,185,80,.12);  border: 1px solid rgba(63,185,80,.3); }
+
+    .severity-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 13px;
+    }
+
+    .severity-card .card-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+    .severity-card .card-number { color: #8b949e; font-size: 12px; margin-bottom: 8px; }
+    .severity-card .comment-box {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 4px;
+      padding: 8px;
+      color: #8b949e;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+    .type-tag {
+      font-size: 11px; color: #8b949e;
+      padding: 2px 7px;
+      border: 1px solid #30363d;
+      border-radius: 20px;
+      margin-right: 6px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #30363d;
+      border-top-color: #2f81f7;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- ── Auth page ── -->
+<div id="page-auth" class="page active">
+  <div class="auth-box">
+    <h1>GitHub Triage Agent</h1>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('login', this)">Login</button>
+      <button class="tab" onclick="switchTab('signup', this)">Sign up</button>
+    </div>
+
+    <div id="form-login">
+      <div class="field">
+        <label>Email</label>
+        <input id="login-email" type="email" placeholder="you@example.com"/>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="login-password" type="password" placeholder="••••••••"/>
+      </div>
+      <button onclick="login()">Login</button>
+    </div>
+
+    <div id="form-signup" style="display:none">
+      <div class="field">
+        <label>Email</label>
+        <input id="signup-email" type="email" placeholder="you@example.com"/>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="signup-password" type="password" placeholder="••••••••"/>
+      </div>
+      <div class="field">
+        <label>GitHub Token</label>
+        <input id="signup-token" type="password" placeholder="ghp_..."/>
+        <p class="hint">Needs repo + issues read/write scope</p>
+      </div>
+      <button onclick="signup()">Create account</button>
+    </div>
+
+    <p id="auth-error" class="error"></p>
+  </div>
+</div>
+
+<!-- ── Dashboard page ── -->
+<div id="page-dashboard" class="page">
+  <div class="dashboard">
+    <div class="topbar">
+      <h1>Triage Agent</h1>
+      <button class="logout" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="run-box">
+      <input id="repo-input" type="text" placeholder="owner/repo  e.g. facebook/react"/>
+      <button id="run-btn" onclick="runTriage()">Run triage</button>
+    </div>
+
+    <div id="status-bar" style="display:none; margin-bottom:20px; font-size:13px; color:#8b949e;">
+      <span class="spinner"></span> Running triage...
+    </div>
+
+    <p class="section-title">Review queue</p>
+    <div id="pending-list"></div>
+
+    <p class="section-title" style="margin-top:32px;">Classified Issues</p>
+    <div id="results-empty" class="empty" style="display:none"></div>
+    <div class="severity-grid">
+      <div class="severity-lane lane-high">
+        <span class="lane-header">High / Critical</span>
+        <div id="lane-high"></div>
+      </div>
+      <div class="severity-lane lane-medium">
+        <span class="lane-header">Medium</span>
+        <div id="lane-medium"></div>
+      </div>
+      <div class="severity-lane lane-low">
+        <span class="lane-header">Low</span>
+        <div id="lane-low"></div>
+      </div>
+    </div>
+
+    <div id="reviewed-section" style="display:none; margin-top:32px;">
+      <p class="section-title">Reviewed</p>
+      <div id="reviewed-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API      = "http://localhost:8000"
+  let threadId   = null
+  let pollTimer  = null
+
+  // ── Init — check if already logged in via cookie ──────────────────────────
+
+  async function init() {
+    try {
+      const res = await fetch(API + "/status/ping", { credentials: "include" })
+      if (res.ok) showPage("dashboard")
+    } catch (e) { /* stay on auth page */ }
+  }
+
+  init()
+
+  function showPage(name) {
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"))
+    document.getElementById("page-" + name).classList.add("active")
+  }
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+
+  function switchTab(tab, btn) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"))
+    btn.classList.add("active")
+    document.getElementById("form-login").style.display  = tab === "login"  ? "block" : "none"
+    document.getElementById("form-signup").style.display = tab === "signup" ? "block" : "none"
+    document.getElementById("auth-error").textContent = ""
+  }
+
+  async function login() {
+    const email    = document.getElementById("login-email").value
+    const password = document.getElementById("login-password").value
+    try {
+      const res = await post("/login", { email, password })
+      if (res.ok) {
+        showPage("dashboard")
+      } else {
+        document.getElementById("auth-error").textContent = res.detail || "Login failed"
+      }
+    } catch (e) {
+      document.getElementById("auth-error").textContent = "Could not reach server"
+    }
+  }
+
+  async function signup() {
+    const email        = document.getElementById("signup-email").value
+    const password     = document.getElementById("signup-password").value
+    const github_token = document.getElementById("signup-token").value
+    try {
+      const res = await post("/signup", { email, password, github_token })
+      if (res.ok) {
+        showPage("dashboard")
+      } else {
+        document.getElementById("auth-error").textContent = res.detail || "Signup failed"
+      }
+    } catch (e) {
+      document.getElementById("auth-error").textContent = "Could not reach server"
+    }
+  }
+
+  async function logout() {
+    await post("/logout", {})
+    clearInterval(pollTimer)
+    threadId = null
+
+    // clear auth fields
+    document.getElementById("login-email").value    = ""
+    document.getElementById("login-password").value = ""
+    document.getElementById("signup-email").value   = ""
+    document.getElementById("signup-password").value = ""
+    document.getElementById("signup-token").value   = ""
+    document.getElementById("auth-error").textContent = ""
+
+    // clear dashboard state
+    document.getElementById("repo-input").value          = ""
+    document.getElementById("pending-list").innerHTML    = ""
+    document.getElementById("lane-high").innerHTML              = ""
+    document.getElementById("lane-medium").innerHTML            = ""
+    document.getElementById("lane-low").innerHTML               = ""
+    document.getElementById("results-empty").style.display      = "none"
+    document.getElementById("reviewed-section").style.display   = "none"
+    document.getElementById("reviewed-list").innerHTML          = ""
+    document.getElementById("status-bar").style.display         = "none"
+    document.getElementById("run-btn").disabled                 = false
+
+    showPage("auth")
+  }
+
+  // ── Triage ────────────────────────────────────────────────────────────────
+
+  async function runTriage() {
+    const repo = document.getElementById("repo-input").value.trim()
+    if (!repo) return
+
+    document.getElementById("run-btn").disabled = true
+    document.getElementById("status-bar").style.display = "block"
+    document.getElementById("pending-list").innerHTML = ""
+    document.getElementById("lane-high").innerHTML            = ""
+    document.getElementById("lane-medium").innerHTML          = ""
+    document.getElementById("lane-low").innerHTML             = ""
+    document.getElementById("results-empty").style.display    = "none"
+    document.getElementById("reviewed-section").style.display = "none"
+    document.getElementById("reviewed-list").innerHTML        = ""
+
+    const res = await post("/triage", { repo })
+    if (!res.thread_id) {
+      alert(res.detail || "Failed to start triage")
+      resetRunBtn()
+      return
+    }
+
+    threadId  = res.thread_id
+    pollTimer = setInterval(poll, 3000)
+  }
+
+  async function poll() {
+    const res = await get("/status/" + threadId)
+    renderPending(res.pending)
+    renderClassified(res.classified || [], res.status === "done", res.fetched_count || 0)
+    if (res.status === "done") {
+      clearInterval(pollTimer)
+      resetRunBtn()
+    }
+  }
+
+  async function approve(approved) {
+    await post("/approve", { thread_id: threadId, approved })
+    document.getElementById("pending-list").innerHTML = ""
+    await poll()   // immediate update instead of waiting for the timer
+  }
+
+  function resetRunBtn() {
+    document.getElementById("run-btn").disabled = false
+    document.getElementById("status-bar").style.display = "none"
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  function renderPending(pending) {
+    const el = document.getElementById("pending-list")
+    if (!pending) { el.innerHTML = ""; return }
+    const issue  = pending.issue
+    const sevCol = pending.severity === "critical" || pending.severity === "high" ? "#f85149"
+                 : pending.severity === "low" ? "#3fb950" : "#d29922"
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">${esc(issue.title)}</span>
+          <span class="card-number">#${issue.number}</span>
+        </div>
+        <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <span class="type-tag">${esc(pending.classification)}</span>
+          <span style="font-size:12px;font-weight:600;color:${sevCol}">${esc(pending.severity).toUpperCase()}</span>
+        </div>
+        <div class="comment-box">${esc(pending.comment)}</div>
+        <div class="card-actions">
+          <button class="btn-approve" onclick="approve(true)">Post comment</button>
+          <button class="btn-reject"  onclick="approve(false)">Skip</button>
+        </div>
+      </div>`
+  }
+
+  function renderClassified(classified, isDone, fetchedCount) {
+    const emptyEl  = document.getElementById("results-empty")
+    const high     = document.getElementById("lane-high")
+    const medium   = document.getElementById("lane-medium")
+    const low      = document.getElementById("lane-low")
+    const revSec   = document.getElementById("reviewed-section")
+    const revList  = document.getElementById("reviewed-list")
+
+    if (!classified.length) {
+      high.innerHTML = medium.innerHTML = low.innerHTML = ""
+      revSec.style.display  = "none"
+      emptyEl.style.display = "block"
+      emptyEl.textContent   = isDone && fetchedCount === 0
+        ? "No open issues found in this repository."
+        : ""
+      return
+    }
+
+    emptyEl.style.display = "none"
+
+    // ── severity lanes (all issues) ──
+    const buckets = { high: [], medium: [], low: [] }
+    for (const r of classified) {
+      const sev = (r.severity || "medium").toLowerCase()
+      const key = (sev === "critical" || sev === "high") ? "high"
+                : sev === "low" ? "low" : "medium"
+      buckets[key].push(r)
+    }
+
+    const statusBadge = r => {
+      if (r.posted === true)  return `<span class="posted-tag">Commented</span>`
+      if (r.posted === false) return `<span class="rejected-tag">Skipped</span>`
+      return `<span style="font-size:12px;color:#8b949e;padding:3px 8px;border:1px solid #30363d;border-radius:20px">Pending</span>`
+    }
+
+    const renderLaneCard = r => `
+      <div class="severity-card">
+        <div class="card-title">${esc(r.issue.title)}</div>
+        <div class="card-number">#${r.issue.number}</div>
+        <span class="type-tag">${esc(r.classification)}</span>
+        ${statusBadge(r)}
+      </div>`
+
+    high.innerHTML   = buckets.high.map(renderLaneCard).join("")   || '<p style="color:#8b949e;font-size:13px;padding:8px 0">None</p>'
+    medium.innerHTML = buckets.medium.map(renderLaneCard).join("") || '<p style="color:#8b949e;font-size:13px;padding:8px 0">None</p>'
+    low.innerHTML    = buckets.low.map(renderLaneCard).join("")     || '<p style="color:#8b949e;font-size:13px;padding:8px 0">None</p>'
+
+    // ── reviewed section (full cards for acted-on issues) ──
+    const reviewed = classified.filter(r => r.posted !== null)
+    if (!reviewed.length) {
+      revSec.style.display = "none"
+      return
+    }
+
+    revSec.style.display = "block"
+    revList.innerHTML = reviewed.map(r => `
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">${esc(r.issue.title)}</span>
+          <span class="card-number">#${r.issue.number}</span>
+        </div>
+        <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <span class="type-tag">${esc(r.classification)}</span>
+          <span class="type-tag">${esc(r.severity)}</span>
+        </div>
+        <div class="comment-box">${esc(r.comment)}</div>
+        <div style="margin-top:10px">
+          ${r.posted
+            ? `<span class="posted-tag">Commented on #${r.issue.number}</span>`
+            : `<span class="rejected-tag">Skipped</span>`}
+        </div>
+      </div>`).join("")
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  async function post(path, body) {
+    const res = await fetch(API + path, {
+      method: "POST",
+      credentials: "include",          // sends httpOnly cookie automatically
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    return res.json()
+  }
+
+  async function get(path) {
+    const res = await fetch(API + path, {
+      credentials: "include",          // sends httpOnly cookie automatically
+    })
+    return res.json()
+  }
+
+  function esc(str) {
+    return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  }
+</script>
+</body>
+</html>
