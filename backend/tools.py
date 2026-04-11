@@ -1,7 +1,7 @@
 import os
+import requests
 from dotenv import load_dotenv
 from github import Github
-from sentence_transformers import SentenceTransformer
 from supabase import create_client
 from groq import Groq
 from cryptography.fernet import Fernet
@@ -10,10 +10,12 @@ load_dotenv()
 
 # ── Clients ──────────────────────────────────────────────────────────────────
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 groq     = Groq(api_key=os.getenv("GROQ_API_KEY"))
 fernet   = Fernet(os.getenv("ENCRYPTION_KEY").encode())
+
+HF_API_KEY = os.getenv("HF_API_KEY", "")
+_HF_URL    = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
 
 # ── Token encryption ──────────────────────────────────────────────────────────
 
@@ -62,7 +64,12 @@ def post_comment(repo_name: str, github_token: str, issue_number: int, body: str
 # ── Embeddings + Supabase ─────────────────────────────────────────────────────
 
 def embed(text: str) -> list[float]:
-    return embedder.encode(text).tolist()
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"} if HF_API_KEY else {}
+    resp = requests.post(_HF_URL, headers=headers, json={"inputs": text}, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    # HF returns [[...float...]] for sentence-transformers
+    return data[0] if isinstance(data[0], list) else data
 
 def find_duplicate(issue: dict, threshold: float = 0.88) -> int | None:
     vector = embed(issue["title"] + " " + issue["body"])

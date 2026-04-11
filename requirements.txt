@@ -2,7 +2,6 @@ fastapi
 uvicorn[standard]
 python-dotenv
 PyGithub
-sentence-transformers
 supabase
 groq
 langgraph
