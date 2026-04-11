@@ -13,7 +13,7 @@ load_dotenv()
 
 class State(TypedDict):
     repo:          str
-    github_token:  str
+    user_id:       str          # used to fetch github_token from DB at runtime (never stored in state)
     mode:          str          # "full" (has token) | "lite" (no token, no storage)
     issues:        list[dict]   # raw issues fetched from GitHub
     fetched_count: int
@@ -25,7 +25,8 @@ class State(TypedDict):
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
 def fetch_node(state: State) -> dict:
-    issues = tools.fetch_issues(state["repo"], state["github_token"])
+    github_token = tools.get_github_token(state["user_id"])
+    issues = tools.fetch_issues(state["repo"], github_token)
     return {"issues": issues, "fetched_count": len(issues), "classified": [], "decisions": [], "review_index": 0}
 
 def classify_all_node(state: State) -> dict:
@@ -68,9 +69,10 @@ def post_node(state: State) -> dict:
     item = state["classified"][idx]
 
     if state["approved"]:
+        github_token = tools.get_github_token(state["user_id"])
         tools.post_comment(
             state["repo"],
-            state["github_token"],
+            github_token,
             item["issue"]["number"],
             item["comment"],
         )
@@ -99,6 +101,7 @@ def has_more_to_review(state: State) -> str:
 
 _pool = ConnectionPool(
     os.getenv("SUPABASE_DB_URL"),
+    min_size=1,
     max_size=10,
     kwargs={"autocommit": True, "prepare_threshold": None},
 )

@@ -12,25 +12,31 @@ from jose import jwt, JWTError
 from langgraph.types import Command
 
 from agent import graph
-from tools import supabase, analyse_issue
+from tools import supabase, analyse_issue, encrypt_token
 
 load_dotenv()
 
 app = FastAPI()
 
+_FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+_origins = [
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "http://localhost:5501",
+    "http://127.0.0.1:5501",
+]
+if _FRONTEND_URL:
+    _origins.append(_FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5500",
-        "http://127.0.0.1:5500",
-        "http://localhost:5501",
-        "http://127.0.0.1:5501",
-    ],
+    allow_origins=_FRONTEND_URL or _origins,  # in prod, only allow the real frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-JWT_SECRET = os.getenv("JWT_SECRET", "changeme")
+JWT_SECRET    = os.getenv("JWT_SECRET", "changeme")
+COOKIE_SECURE = os.getenv("ENV", "dev") == "production"
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -90,7 +96,7 @@ def signup(body: SignupRequest):
         "id":            str(uuid.uuid4()),
         "email":         body.email,
         "password_hash": hashed,
-        "github_token":  body.github_token,
+        "github_token":  encrypt_token(body.github_token),
     }
     supabase.table("users").insert(user).execute()
 
@@ -99,7 +105,7 @@ def signup(body: SignupRequest):
         key="token",
         value=make_token(user["id"]),
         httponly=True,
-        secure=False,     # set True in production (HTTPS)
+        secure=COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 3600,
     )
@@ -120,7 +126,7 @@ def login(body: LoginRequest):
         key="token",
         value=make_token(user["id"]),
         httponly=True,
-        secure=False,     # set True in production (HTTPS)
+        secure=COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 3600,
     )
@@ -146,7 +152,7 @@ def start_triage(body: TriageRequest, user: dict = Depends(current_user)):
 
     graph.invoke({
         "repo":          body.repo,
-        "github_token":  user.get("github_token", ""),
+        "user_id":       user["id"],
         "mode":          mode,
         "issues":        [],
         "fetched_count": 0,

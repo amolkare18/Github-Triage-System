@@ -4,6 +4,7 @@ from github import Github
 from sentence_transformers import SentenceTransformer
 from supabase import create_client
 from groq import Groq
+from cryptography.fernet import Fernet
 
 load_dotenv()
 
@@ -12,6 +13,28 @@ load_dotenv()
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 groq     = Groq(api_key=os.getenv("GROQ_API_KEY"))
+fernet   = Fernet(os.getenv("ENCRYPTION_KEY").encode())
+
+# ── Token encryption ──────────────────────────────────────────────────────────
+
+def encrypt_token(token: str) -> str:
+    if not token:
+        return ""
+    return fernet.encrypt(token.encode()).decode()
+
+def decrypt_token(encrypted: str) -> str:
+    if not encrypted:
+        return ""
+    try:
+        return fernet.decrypt(encrypted.encode()).decode()
+    except Exception:
+        return ""  # token was stored before encryption was added
+
+def get_github_token(user_id: str) -> str:
+    result = supabase.table("users").select("github_token").eq("id", user_id).execute()
+    if not result.data:
+        return ""
+    return decrypt_token(result.data[0].get("github_token", ""))
 
 # ── GitHub ────────────────────────────────────────────────────────────────────
 
