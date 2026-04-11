@@ -15,8 +15,9 @@ groq     = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ── GitHub ────────────────────────────────────────────────────────────────────
 
-def fetch_issues(repo_name: str, github_token: str, max_issues: int = 20) -> list[dict]:
-    repo   = Github(github_token).get_repo(repo_name)
+def fetch_issues(repo_name: str, github_token: str = "", max_issues: int = 20) -> list[dict]:
+    gh   = Github(github_token) if github_token else Github()
+    repo = gh.get_repo(repo_name)
     issues = []
     for issue in repo.get_issues(state="open"):
         if issue.pull_request:

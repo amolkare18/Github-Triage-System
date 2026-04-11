@@ -14,6 +14,7 @@ load_dotenv()
 class State(TypedDict):
     repo:          str
     github_token:  str
+    mode:          str          # "full" (has token) | "lite" (no token, no storage)
     issues:        list[dict]   # raw issues fetched from GitHub
     fetched_count: int
     classified:    list[dict]   # [{issue, classification, severity, comment, duplicate_of}] — never mutated after classify_all
@@ -30,7 +31,8 @@ def fetch_node(state: State) -> dict:
 def classify_all_node(state: State) -> dict:
     classified = []
     for issue in state["issues"]:
-        dup_of = tools.find_duplicate(issue)
+        # lite mode: skip duplicate detection (no DB reads, no storage)
+        dup_of = tools.find_duplicate(issue) if state["mode"] == "full" else None
         if dup_of:
             entry = {
                 "issue":          issue,
@@ -86,6 +88,10 @@ def post_node(state: State) -> dict:
 def has_issues(state: State) -> str:
     return "continue" if state.get("fetched_count", 0) > 0 else END
 
+def after_classify(state: State) -> str:
+    # lite mode ends here — no approval loop, no posting
+    return END if state["mode"] == "lite" else "approval"
+
 def has_more_to_review(state: State) -> str:
     return "continue" if state["review_index"] < len(state["classified"]) else END
 
@@ -112,7 +118,10 @@ builder.add_conditional_edges("fetch", has_issues, {
     "continue": "classify_all",
     END:        END,
 })
-builder.add_edge("classify_all", "approval")
+builder.add_conditional_edges("classify_all", after_classify, {
+    "approval": "approval",
+    END:        END,
+})
 builder.add_edge("approval",     "post")
 builder.add_conditional_edges("post", has_more_to_review, {
     "continue": "approval",

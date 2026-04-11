@@ -12,7 +12,7 @@ from jose import jwt, JWTError
 from langgraph.types import Command
 
 from agent import graph
-from tools import supabase
+from tools import supabase, analyse_issue
 
 load_dotenv()
 
@@ -60,7 +60,11 @@ def current_user(token: str = Cookie(None)) -> dict:
 class SignupRequest(BaseModel):
     email:        str
     password:     str
-    github_token: str
+    github_token: str = ""   # optional — empty means lite mode
+
+class GenerateCommentRequest(BaseModel):
+    title: str
+    body:  str
 
 class LoginRequest(BaseModel):
     email:    str
@@ -138,9 +142,12 @@ def start_triage(body: TriageRequest, user: dict = Depends(current_user)):
     thread_id = str(uuid.uuid4())
     config    = {"configurable": {"thread_id": thread_id}}
 
+    mode = "full" if user.get("github_token") else "lite"
+
     graph.invoke({
         "repo":          body.repo,
-        "github_token":  user["github_token"],
+        "github_token":  user.get("github_token", ""),
+        "mode":          mode,
         "issues":        [],
         "fetched_count": 0,
         "classified":    [],
@@ -148,7 +155,7 @@ def start_triage(body: TriageRequest, user: dict = Depends(current_user)):
         "review_index":  0,
     }, config=config)
 
-    return {"thread_id": thread_id}
+    return {"thread_id": thread_id, "mode": mode}
 
 
 
@@ -179,6 +186,7 @@ def get_status(thread_id: str, user: dict = Depends(current_user)):
 
     return {
         "status":        "waiting" if pending else "done",
+        "mode":          state.values.get("mode", "full"),
         "pending":       pending,
         "classified":    merged,
         "fetched_count": state.values.get("fetched_count", 0),
@@ -189,3 +197,9 @@ def approve(body: ApproveRequest, user: dict = Depends(current_user)):
     config = {"configurable": {"thread_id": body.thread_id}}
     graph.invoke(Command(resume=body.approved), config=config)
     return {"ok": True}
+
+@app.post("/generate-comment")
+def generate_comment(body: GenerateCommentRequest, _user: dict = Depends(current_user)):
+    issue  = {"title": body.title, "body": body.body}
+    result = analyse_issue(issue)
+    return {"comment": result["comment"]}

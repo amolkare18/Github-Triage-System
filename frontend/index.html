@@ -257,6 +257,42 @@
       margin-right: 6px;
     }
 
+    .btn-generate {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #e6edf3;
+      width: auto;
+      padding: 6px 14px;
+      font-size: 12px;
+      margin: 8px 0 0 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .btn-generate:hover { background: #2d333b; }
+    .btn-generate:disabled { color: #8b949e; cursor: not-allowed; }
+
+    .generated-comment {
+      margin-top: 10px;
+      background: #0d1117;
+      border: 1px solid #388bfd55;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 12px;
+      color: #c9d1d9;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .mode-badge {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+    .mode-full { color: #3fb950; border: 1px solid #3fb95055; background: rgba(63,185,80,.08); }
+    .mode-lite { color: #d29922; border: 1px solid #d2992255; background: rgba(210,153,34,.08); }
+
     .spinner {
       display: inline-block;
       width: 14px; height: 14px;
@@ -304,9 +340,9 @@
         <input id="signup-password" type="password" placeholder="••••••••"/>
       </div>
       <div class="field">
-        <label>GitHub Token</label>
+        <label>GitHub Token <span style="color:#8b949e;font-weight:400">(optional)</span></label>
         <input id="signup-token" type="password" placeholder="ghp_..."/>
-        <p class="hint">Needs repo + issues read/write scope</p>
+        <p class="hint">With token: post comments on issues, duplicate detection.<br>Without token: classify &amp; preview only — no data stored.</p>
       </div>
       <button onclick="signup()">Create account</button>
     </div>
@@ -319,7 +355,7 @@
 <div id="page-dashboard" class="page">
   <div class="dashboard">
     <div class="topbar">
-      <h1>Triage Agent</h1>
+      <h1>Triage Agent <span id="mode-badge" class="mode-badge" style="display:none"></span></h1>
       <button class="logout" onclick="logout()">Logout</button>
     </div>
 
@@ -363,6 +399,8 @@
   const API      = "http://localhost:8000"
   let threadId   = null
   let pollTimer  = null
+  let triageMode = "full"         // "full" | "lite"
+  const issueMap = {}             // number → {title, body} for generate-comment lookups
 
   // ── Init — check if already logged in via cookie ──────────────────────────
 
@@ -424,7 +462,9 @@
   async function logout() {
     await post("/logout", {})
     clearInterval(pollTimer)
-    threadId = null
+    threadId   = null
+    triageMode = "full"
+    document.getElementById("mode-badge").style.display = "none"
 
     // clear auth fields
     document.getElementById("login-email").value    = ""
@@ -472,18 +512,51 @@
       return
     }
 
-    threadId  = res.thread_id
-    pollTimer = setInterval(poll, 3000)
+    threadId   = res.thread_id
+    triageMode = res.mode || "full"
+    setModeBadge(triageMode)
+    pollTimer  = setInterval(poll, 3000)
+  }
+
+  function setModeBadge(mode) {
+    const badge = document.getElementById("mode-badge")
+    badge.style.display = "inline"
+    if (mode === "lite") {
+      badge.textContent  = "Lite — classify only"
+      badge.className    = "mode-badge mode-lite"
+    } else {
+      badge.textContent  = "Full"
+      badge.className    = "mode-badge mode-full"
+    }
   }
 
   async function poll() {
     const res = await get("/status/" + threadId)
+    if (res.mode) { triageMode = res.mode; setModeBadge(res.mode) }
     renderPending(res.pending)
     renderClassified(res.classified || [], res.status === "done", res.fetched_count || 0)
     if (res.status === "done") {
       clearInterval(pollTimer)
       resetRunBtn()
     }
+  }
+
+  async function generateComment(issueNumber) {
+    const btn   = document.getElementById("genbtn-" + issueNumber)
+    const box   = document.getElementById("genbox-" + issueNumber)
+    const issue = issueMap[issueNumber] || {}
+    btn.disabled    = true
+    btn.textContent = "Generating..."
+    try {
+      const res = await post("/generate-comment", { title: issue.title || "", body: issue.body || "" })
+      box.textContent   = res.comment || "No comment generated."
+      box.style.display = "block"
+    } catch (e) {
+      box.textContent   = "Failed to generate comment."
+      box.style.display = "block"
+    }
+    btn.disabled    = false
+    btn.textContent = "Regenerate"
   }
 
   async function approve(approved) {
@@ -558,19 +631,36 @@
       return `<span style="font-size:12px;color:#8b949e;padding:3px 8px;border:1px solid #30363d;border-radius:20px">Pending</span>`
     }
 
+    // populate lookup map so onclick only needs the issue number
+    for (const r of classified) {
+      issueMap[r.issue.number] = { title: r.issue.title, body: r.issue.body || "" }
+    }
+
     const renderLaneCard = r => `
       <div class="severity-card">
         <div class="card-title">${esc(r.issue.title)}</div>
         <div class="card-number">#${r.issue.number}</div>
         <span class="type-tag">${esc(r.classification)}</span>
-        ${statusBadge(r)}
+        ${triageMode === "lite" ? `
+          <button class="btn-generate" id="genbtn-${r.issue.number}"
+            onclick="generateComment(${r.issue.number})">
+            Generate comment
+          </button>
+          <div class="generated-comment" id="genbox-${r.issue.number}" style="display:none"></div>
+        ` : statusBadge(r)}
       </div>`
 
     high.innerHTML   = buckets.high.map(renderLaneCard).join("")   || '<p style="color:#8b949e;font-size:13px;padding:8px 0">None</p>'
     medium.innerHTML = buckets.medium.map(renderLaneCard).join("") || '<p style="color:#8b949e;font-size:13px;padding:8px 0">None</p>'
     low.innerHTML    = buckets.low.map(renderLaneCard).join("")     || '<p style="color:#8b949e;font-size:13px;padding:8px 0">None</p>'
 
-    // ── reviewed section (full cards for acted-on issues) ──
+    // ── lite mode: generate comment per issue, no reviewed section ──
+    if (triageMode === "lite") {
+      revSec.style.display = "none"
+      return
+    }
+
+    // ── full mode: reviewed section (full cards for acted-on issues) ──
     const reviewed = classified.filter(r => r.posted !== null)
     if (!reviewed.length) {
       revSec.style.display = "none"

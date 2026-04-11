@@ -1,2 +1,4 @@
 .env
 myenv
+
+backend/__pycache__
