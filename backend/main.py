@@ -1,7 +1,8 @@
 import os
 import uuid
 import bcrypt
-from datetime import datetime, timedelta
+import logging
+from datetime import UTC, datetime, timedelta
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Depends, Cookie, Response
@@ -15,6 +16,7 @@ from agent import graph
 from tools import supabase, analyse_issue, encrypt_token
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -24,13 +26,14 @@ _origins = [
     "http://127.0.0.1:5500",
     "http://localhost:5501",
     "http://127.0.0.1:5501",
+    "http://localhost:8000"
 ]
 if _FRONTEND_URL:
     _origins.append(_FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_FRONTEND_URL or _origins,  # in prod, only allow the real frontend
+    allow_origins=_origins,  # in prod, include only the real frontend via FRONTEND_URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,10 +43,20 @@ COOKIE_SECURE = os.getenv("ENV", "dev") == "production"
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
+def execute_supabase(query):
+    try:
+        return query.execute()
+    except Exception as exc:
+        logger.warning("Supabase request failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase is unavailable. Check SUPABASE_URL and SUPABASE_KEY in .env.",
+        ) from exc
+
 def make_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
-        "exp": datetime.utcnow() + timedelta(days=7),
+        "exp": datetime.now(UTC) + timedelta(days=7),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
@@ -56,7 +69,7 @@ def current_user(token: str = Cookie(None)) -> dict:
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    result = supabase.table("users").select("*").eq("id", user_id).execute()
+    result = execute_supabase(supabase.table("users").select("*").eq("id", user_id))
     if not result.data:
         raise HTTPException(status_code=401, detail="User not found")
     return result.data[0]
@@ -87,7 +100,7 @@ class ApproveRequest(BaseModel):
 
 @app.post("/signup")
 def signup(body: SignupRequest):
-    existing = supabase.table("users").select("id").eq("email", body.email).execute()
+    existing = execute_supabase(supabase.table("users").select("id").eq("email", body.email))
     if existing.data:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -98,7 +111,7 @@ def signup(body: SignupRequest):
         "password_hash": hashed,
         "github_token":  encrypt_token(body.github_token),
     }
-    supabase.table("users").insert(user).execute()
+    execute_supabase(supabase.table("users").insert(user))
 
     response = JSONResponse({"ok": True})
     response.set_cookie(
@@ -113,7 +126,7 @@ def signup(body: SignupRequest):
 
 @app.post("/login")
 def login(body: LoginRequest):
-    result = supabase.table("users").select("*").eq("email", body.email).execute()
+    result = execute_supabase(supabase.table("users").select("*").eq("email", body.email))
     if not result.data:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -138,6 +151,10 @@ def logout():
     response.delete_cookie("token")
     return response
 
+@app.get("/status/ping")
+def ping(user: dict = Depends(current_user)):
+    return {"ok": True, "user_id": user["id"]}
+
 
 
 
@@ -150,16 +167,25 @@ def start_triage(body: TriageRequest, user: dict = Depends(current_user)):
 
     mode = "full" if user.get("github_token") else "lite"
 
-    graph.invoke({
-        "repo":          body.repo,
-        "user_id":       user["id"],
-        "mode":          mode,
-        "issues":        [],
-        "fetched_count": 0,
-        "classified":    [],
-        "decisions":     [],
-        "review_index":  0,
-    }, config=config)
+    try:
+        graph.invoke({
+            "repo":          body.repo,
+            "user_id":       user["id"],
+            "mode":          mode,
+            "issues":        [],
+            "fetched_count": 0,
+            "classified":    [],
+            "decisions":     [],
+            "review_index":  0,
+        }, config=config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Triage failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Triage failed while contacting an external service. Check the repo name and API keys.",
+        ) from exc
 
     return {"thread_id": thread_id, "mode": mode}
 
@@ -209,3 +235,9 @@ def generate_comment(body: GenerateCommentRequest, _user: dict = Depends(current
     issue  = {"title": body.title, "body": body.body}
     result = analyse_issue(issue)
     return {"comment": result["comment"]}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8001)

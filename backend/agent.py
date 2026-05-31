@@ -1,6 +1,8 @@
 import os
+import logging
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg_pool import ConnectionPool
 from langgraph.types import interrupt
@@ -8,6 +10,7 @@ from dotenv import load_dotenv
 import tools
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -99,14 +102,42 @@ def has_more_to_review(state: State) -> str:
 
 # ── Graph ─────────────────────────────────────────────────────────────────────
 
-_pool = ConnectionPool(
-    os.getenv("SUPABASE_DB_URL"),
-    min_size=1,
-    max_size=10,
-    kwargs={"autocommit": True, "prepare_threshold": None},
-)
-checkpointer = PostgresSaver(_pool)
-checkpointer.setup()
+def build_checkpointer():
+    checkpoint_backend = os.getenv("LANGGRAPH_CHECKPOINTS", "").lower()
+    env = os.getenv("ENV", "dev").lower()
+
+    if checkpoint_backend in {"memory", "inmemory", "in-memory"} or (
+        env != "production" and checkpoint_backend != "postgres"
+    ):
+        logger.info("Using in-memory LangGraph checkpoints.")
+        return MemorySaver()
+
+    db_url = os.getenv("SUPABASE_DB_URL")
+    if not db_url:
+        logger.warning("SUPABASE_DB_URL is not set; using in-memory LangGraph checkpoints.")
+        return MemorySaver()
+
+    pool = ConnectionPool(
+        db_url,
+        min_size=0,
+        max_size=10,
+        timeout=5,
+        kwargs={"autocommit": True, "prepare_threshold": None},
+    )
+    checkpointer = PostgresSaver(pool)
+    try:
+        checkpointer.setup()
+        return checkpointer
+    except Exception as exc:
+        pool.close()
+        logger.warning(
+            "Could not initialize Postgres checkpoints; using in-memory LangGraph checkpoints. %s",
+            exc,
+        )
+        return MemorySaver()
+
+
+checkpointer = build_checkpointer()
 
 builder = StateGraph(State)
 

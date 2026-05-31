@@ -2,6 +2,7 @@ import os
 import requests
 from dotenv import load_dotenv
 from github import Github
+from github.GithubException import GithubException, UnknownObjectException
 from supabase import create_client
 from groq import Groq
 from cryptography.fernet import Fernet
@@ -41,8 +42,19 @@ def get_github_token(user_id: str) -> str:
 # ── GitHub ────────────────────────────────────────────────────────────────────
 
 def fetch_issues(repo_name: str, github_token: str = "", max_issues: int = 20) -> list[dict]:
+    if "/" not in repo_name:
+        raise ValueError("Enter the repository as owner/repo, for example facebook/react.")
+
     gh   = Github(github_token) if github_token else Github()
-    repo = gh.get_repo(repo_name)
+    try:
+        repo = gh.get_repo(repo_name)
+    except UnknownObjectException as exc:
+        raise ValueError(
+            "Repository not found. Check the owner/repo name, or add a GitHub token for private repositories."
+        ) from exc
+    except GithubException as exc:
+        raise RuntimeError(f"GitHub API error: {exc.data.get('message', exc.status)}") from exc
+
     issues = []
     for issue in repo.get_issues(state="open"):
         if issue.pull_request:
