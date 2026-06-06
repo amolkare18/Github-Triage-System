@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Depends, Cookie, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from jose import jwt, JWTError
 from langgraph.types import Command
@@ -19,11 +19,6 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-
-@app.get("/")
-def serve_frontend():
-    frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "index.html")
-    return FileResponse(frontend_path)
 
 _FRONTEND_URL = os.getenv("FRONTEND_URL", "")
 _origins = [
