@@ -305,7 +305,102 @@
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* ── Analytics Dashboard ── */
+    .btn-dashboard {
+      background: linear-gradient(135deg, #6e40c9, #2f81f7);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 20px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      animation: pulse 2s infinite;
+      width: auto;
+    }
+    .btn-dashboard:hover {
+      background: linear-gradient(135deg, #5833a1, #2468c9);
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(110, 64, 201, 0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(110, 64, 201, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(110, 64, 201, 0); }
+    }
+
+    .dashboard-modal-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(13, 17, 23, 0.85);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .dashboard-modal {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 600px;
+      padding: 32px;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+    }
+    .dashboard-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .dashboard-modal-header h2 { font-size: 20px; }
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      font-size: 24px;
+      cursor: pointer;
+      line-height: 1;
+      width: auto;
+      padding: 0;
+    }
+    .btn-close:hover { color: #e6edf3; }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-value { font-size: 32px; font-weight: bold; }
+    .stat-value.bugs { color: #f85149; }
+    .stat-value.features { color: #2f81f7; }
+    .stat-value.questions { color: #d29922; }
+
+    .btn-download {
+      background: #2ea043;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: 600;
+      margin-top: 10px;
+    }
+    .btn-download:hover { background: #2c974b; }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
 
@@ -368,6 +463,12 @@
       <span class="spinner"></span> Running triage...
     </div>
 
+    <div id="dashboard-btn-container" style="display:none; text-align: center; margin-bottom: 24px;">
+      <button class="btn-dashboard" onclick="openAnalyticsDashboard()">
+        ⚡ View Analytics Dashboard
+      </button>
+    </div>
+
     <p class="section-title">Review queue</p>
     <div id="pending-list"></div>
 
@@ -395,12 +496,49 @@
   </div>
 </div>
 
+<!-- ── Analytics Modal ── -->
+<div id="analytics-modal" class="dashboard-modal-overlay">
+  <div class="dashboard-modal" id="dashboard-capture-area">
+    <div class="dashboard-modal-header">
+      <h2>Triage Analytics</h2>
+      <button class="btn-close" onclick="closeAnalyticsDashboard()">×</button>
+    </div>
+    
+    <div class="stats-grid">
+      <div class="stat-card" style="grid-column: span 2;">
+        <div class="stat-title">Total Issues</div>
+        <div class="stat-value" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Bugs</div>
+        <div class="stat-value bugs" id="stat-bugs">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Features / Enhancements</div>
+        <div class="stat-value features" id="stat-features">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Questions</div>
+        <div class="stat-value questions" id="stat-questions">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Critical / High Severity</div>
+        <div class="stat-value bugs" id="stat-high-sev">0</div>
+      </div>
+    </div>
+
+    <button class="btn-download" onclick="downloadDashboardImage()">📸 Download as Image</button>
+  </div>
+</div>
+
 <script>
-  const API      = "http://127.0.0.1:8001"
+  // If running from Live Server (5500) use the full backend URL. If accessed via FastAPI directly, use relative path.
+  const API = window.location.port === "8001" ? "" : "http://localhost:8001";
   let threadId   = null
   let pollTimer  = null
   let triageMode = "full"         // "full" | "lite"
   const issueMap = {}             // number → {title, body} for generate-comment lookups
+  let currentClassified = []      // stores the latest classified issues for the dashboard
 
   // ── Init — check if already logged in via cookie ──────────────────────────
 
@@ -485,6 +623,8 @@
     document.getElementById("reviewed-list").innerHTML          = ""
     document.getElementById("status-bar").style.display         = "none"
     document.getElementById("run-btn").disabled                 = false
+    document.getElementById("dashboard-btn-container").style.display = "none"
+    currentClassified = []
 
     showPage("auth")
   }
@@ -504,6 +644,8 @@
     document.getElementById("results-empty").style.display    = "none"
     document.getElementById("reviewed-section").style.display = "none"
     document.getElementById("reviewed-list").innerHTML        = ""
+    document.getElementById("dashboard-btn-container").style.display = "none"
+    currentClassified = []
 
     const res = await post("/triage", { repo })
     if (!res.thread_id) {
@@ -533,11 +675,15 @@
   async function poll() {
     const res = await get("/status/" + threadId)
     if (res.mode) { triageMode = res.mode; setModeBadge(res.mode) }
+    currentClassified = res.classified || []
     renderPending(res.pending)
-    renderClassified(res.classified || [], res.status === "done", res.fetched_count || 0)
+    renderClassified(currentClassified, res.status === "done", res.fetched_count || 0)
     if (res.status === "done") {
       clearInterval(pollTimer)
       resetRunBtn()
+      if (currentClassified.length > 0) {
+        document.getElementById("dashboard-btn-container").style.display = "block"
+      }
     }
   }
 
@@ -708,6 +854,62 @@
 
   function esc(str) {
     return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  }
+
+  // ── Analytics Dashboard ───────────────────────────────────────────────────
+
+  function openAnalyticsDashboard() {
+    const modal = document.getElementById("analytics-modal");
+    modal.style.display = "flex";
+    
+    let total = currentClassified.length;
+    let bugs = 0, features = 0, questions = 0, highSev = 0;
+    
+    currentClassified.forEach(item => {
+       const cls = (item.classification || "").toLowerCase();
+       if (cls.includes("bug")) bugs++;
+       else if (cls.includes("feature") || cls.includes("enhancement")) features++;
+       else questions++;
+       
+       const sev = (item.severity || "").toLowerCase();
+       if (sev === "critical" || sev === "high") highSev++;
+    });
+    
+    document.getElementById("stat-total").textContent = total;
+    document.getElementById("stat-bugs").textContent = bugs;
+    document.getElementById("stat-features").textContent = features;
+    document.getElementById("stat-questions").textContent = questions;
+    document.getElementById("stat-high-sev").textContent = highSev;
+  }
+  
+  function closeAnalyticsDashboard() {
+    document.getElementById("analytics-modal").style.display = "none";
+  }
+  
+  function downloadDashboardImage() {
+    const el = document.getElementById("dashboard-capture-area");
+    const closeBtn = el.querySelector(".btn-close");
+    const dlBtn = el.querySelector(".btn-download");
+    
+    // Hide buttons during capture
+    closeBtn.style.visibility = "hidden";
+    dlBtn.style.visibility = "hidden";
+    
+    html2canvas(el, { backgroundColor: "#161b22", scale: 2 }).then(canvas => {
+      const link = document.createElement('a');
+      link.download = 'triage-analytics.png';
+      link.href = canvas.toDataURL();
+      link.click();
+      
+      // Restore buttons
+      closeBtn.style.visibility = "visible";
+      dlBtn.style.visibility = "visible";
+    }).catch(err => {
+      console.error("Failed to capture dashboard", err);
+      closeBtn.style.visibility = "visible";
+      dlBtn.style.visibility = "visible";
+      alert("Failed to download image. See console for details.");
+    });
   }
 </script>
 </body>
